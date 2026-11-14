@@ -8,6 +8,8 @@ from starlette.responses import Response
 from app.core.config import Settings, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
+from app.modules.auth.router import router as auth_router
+from app.modules.engagement.router import router as engagement_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -23,6 +25,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     register_exception_handlers(application)
+    application.include_router(auth_router)
+    application.include_router(engagement_router)
 
     @application.middleware("http")
     async def add_request_id(

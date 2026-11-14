@@ -13,10 +13,16 @@ uvicorn app.main:app --reload
 ```
 
 The API is available at `http://localhost:8000`; its health endpoint is
-`GET /v1/health`. Replace the example `JWT_SECRET` before using this scaffold
+`GET /v1/health`. Browse all registered endpoints in Swagger UI at
+`http://localhost:8000/docs`; the OpenAPI JSON is at
+`http://localhost:8000/openapi.json`. `make openapi` exports the schema to
+`openapi.json`. Replace the example `JWT_SECRET` before using this scaffold
 outside local development. `MOCK=true` is the development default. A local
 PostgreSQL database is required for database-backed features; configure
 `DATABASE_URL` in `.env`.
+
+See the [API contract](docs/api-contract.md) for request/response examples and
+the current endpoint list.
 
 ## Development commands
 
