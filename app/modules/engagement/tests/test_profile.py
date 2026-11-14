@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -114,7 +115,7 @@ def test_profile_rejects_org_access_token(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://unused")
     monkeypatch.setenv("JWT_SECRET", _TEST_SECRET)
 
-    org_token = create_access_token("org-id", "org", _TEST_SECRET)
+    org_token = create_access_token(uuid4(), "org", _TEST_SECRET)
     with TestClient(app) as client:
         response = client.post(
             "/v1/profile",

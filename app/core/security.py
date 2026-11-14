@@ -8,6 +8,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from typing import Literal
+from uuid import UUID
 
 _BASE64URL_SEGMENT = re.compile(r"^[A-Za-z0-9_-]+$")
 _TOKEN_TTL_SECONDS = 3600
@@ -26,6 +27,7 @@ class TokenError(ValueError):
 class AccessTokenClaims:
     subject: str
     role: Literal["student", "org"]
+    org_id: UUID | None = None
 
 
 def create_demo_student_identity() -> str:
@@ -33,14 +35,15 @@ def create_demo_student_identity() -> str:
 
 
 def create_access_token(
-    subject: str,
+    subject: str | UUID,
     role: Literal["student", "org"],
     secret: str,
 ) -> str:
     header = _encode_segment({"alg": "HS256", "typ": "JWT"})
+    identity_claim = {"sub": str(subject)} if role == "student" else {"org_id": str(subject)}
     payload = _encode_segment(
         {
-            "sub": subject,
+            **identity_claim,
             "role": role,
             "exp": int(time.time()) + _TOKEN_TTL_SECONDS,
         }
@@ -77,20 +80,30 @@ def decode_access_token(token: str, secret: str) -> AccessTokenClaims:
     if not isinstance(payload, dict):
         raise TokenError("Invalid access token")
 
-    subject = payload.get("sub")
     role = payload.get("role")
     expires_at = payload.get("exp")
     if (
-        not isinstance(subject, str)
-        or not subject
-        or role not in ("student", "org")
+        role not in ("student", "org")
         or isinstance(expires_at, bool)
         or not isinstance(expires_at, int)
         or expires_at <= int(time.time())
     ):
         raise TokenError("Invalid or expired access token")
 
-    return AccessTokenClaims(subject=subject, role=role)
+    if role == "student":
+        subject = payload.get("sub")
+        if not isinstance(subject, str) or not subject:
+            raise TokenError("Invalid access token")
+        return AccessTokenClaims(subject=subject, role="student")
+
+    org_id = payload.get("org_id")
+    if not isinstance(org_id, str):
+        raise TokenError("Invalid access token")
+    try:
+        parsed_org_id = UUID(org_id)
+    except ValueError as exc:
+        raise TokenError("Invalid access token") from exc
+    return AccessTokenClaims(subject=org_id, role="org", org_id=parsed_org_id)
 
 
 def _encode_segment(value: dict[str, str | int]) -> str:

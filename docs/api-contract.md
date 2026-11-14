@@ -1,10 +1,10 @@
 # TrojanEngage API contract
 
 This document describes the HTTP endpoints currently implemented by the API
-and a proposed contract for the organization endpoints. All application
-endpoints use the `/v1` prefix and JSON request/response bodies where
-applicable. Proposed endpoints are not implemented and will not appear in
-Swagger until their routes are added.
+and a proposed contract for organization endpoints that are still pending.
+All application endpoints use the `/v1` prefix and JSON request/response
+bodies where applicable. Pending endpoints will not appear in Swagger until
+their routes are added.
 
 ## Interactive API references
 
@@ -22,8 +22,12 @@ schemas.
 | Method | Path | Authentication | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/v1/health` | None | Check that the API process is responding. |
-| `POST` | `/v1/auth/demo` | None | Create a demo student identity and return a signed bearer token. |
+| `POST` | `/v1/auth/demo` | None | Create a demo student or organization identity and return a signed bearer token. |
 | `POST` | `/v1/profile` | Student bearer token | Create or replace the authenticated student's profile. |
+| `POST` | `/v1/events` | Organization bearer token | Create a draft event for the authenticated organization. |
+| `POST` | `/v1/events/{event_id}/publish` | Organization bearer token | Publish a draft event. |
+| `GET` | `/v1/events/{event_id}/live` | Organization bearer token | Read a published or live event. |
+| `POST` | `/v1/events/{event_id}/close` | Organization bearer token | Close a published or live event. |
 
 ### `GET /v1/health`
 
@@ -40,9 +44,12 @@ Example response:
 
 ### `POST /v1/auth/demo`
 
-Creates a new pseudonymous student identity and returns an HS256-signed JWT.
-This endpoint accepts no request body. Each request creates a new identity;
-keep using the returned token to access that identity's profile.
+Creates a demo identity and returns an HS256-signed JWT. With no request body
+or `{"role":"student"}`, it creates a pseudonymous student identity. To create
+a demo organization, send a JSON body with `role: "org"` and an
+`organization_name`; the organization is persisted and its generated ID is
+included in the token. Each request creates a new identity or organization.
+Keep the returned token to continue using that identity.
 
 Example request:
 
@@ -56,13 +63,38 @@ Example response (`access_token` is abbreviated):
 {
   "access_token": "<signed-token>",
   "token_type": "bearer",
-  "expires_in": 3600
+  "expires_in": 3600,
+  "role": "student",
+  "org_id": null
 }
 ```
 
-The token expires after one hour. The student identity is stored in the token's
-`sub` claim as a pseudonymous hash; the API does not ask for a student's name or
-email.
+Organization request:
+
+```json
+{
+  "role": "org",
+  "organization_name": "Trojan Student Org"
+}
+```
+
+An organization response includes `"role":"org"` and its generated UUID in
+`org_id`, for example:
+
+```json
+{
+  "access_token": "<signed-token>",
+  "token_type": "bearer",
+  "expires_in": 3600,
+  "role": "org",
+  "org_id": "c1ff61c7-294c-48c4-9c2a-bdb601bb9322"
+}
+```
+
+The token expires after one hour. For students, the pseudonymous hash is stored
+in the token's `sub` claim; the API does not ask for a student's name or email.
+For organizations, the token includes the generated `org_id`. Demo auth is for
+local development and is not production authentication.
 
 ### `POST /v1/profile`
 
@@ -112,6 +144,56 @@ This endpoint persists data to PostgreSQL. Run `alembic upgrade head` against a
 PostgreSQL database with the pgvector extension available before using it. The
 database URL is configured with `DATABASE_URL`.
 
+### Organization event lifecycle
+
+All event routes require an organization token. The `org_id` is read from the
+token and is never accepted from the request body. Event IDs are UUIDs.
+
+#### `POST /v1/events`
+
+Creates an event in `draft` status and returns `201 Created`.
+
+Request fields:
+
+| Field | Type | Required | Constraints |
+| --- | --- | --- | --- |
+| `name` | string | Yes | 1–200 characters. |
+| `type` | string | Yes | 1–80 characters. |
+| `start_ts`, `end_ts` | timestamp | Yes | UTC ISO 8601; end must be later than start. |
+| `venue` | string or `null` | No | At most 255 characters. |
+| `topic_tags` | string array | No | Defaults to `[]`; at most 50 entries. |
+| `cost`, `budget_planned` | number or `null` | No | Must be zero or greater. |
+| `expected_size` | integer or `null` | No | Must be zero or greater. |
+
+`org_id`, `status`, `headcount`, and `budget_actual` are server-managed and
+cannot be set through this endpoint.
+
+#### `POST /v1/events/{event_id}/publish`
+
+Changes a draft event to `published` and returns `200 OK`. Publishing an
+already published event is idempotent. Other source statuses return `409
+Conflict`.
+
+#### `GET /v1/events/{event_id}/live`
+
+Returns the event details for events in `published` or `live` status. Draft or
+closed events return `409 Conflict`. Aggregate live metrics are not implemented
+yet, so this initial response contains event details only.
+
+There is not yet a route or background job that transitions an event from
+`published` to `live`; the `GET` route does not change event state.
+
+#### `POST /v1/events/{event_id}/close`
+
+Changes a `published` or `live` event to `closed` and returns `200 OK`.
+Closing an already closed event is idempotent. Draft events return
+`409 Conflict`.
+
+Event data is persisted to PostgreSQL. Apply the Alembic migrations before
+using these routes. The repository scopes event lookups by both event ID and
+the organization ID from the token; an event owned by another organization is
+reported as `404 Not Found`.
+
 ## Errors and request IDs
 
 Errors use this response shape:
@@ -131,9 +213,10 @@ Relevant profile/authentication responses:
 
 | Status | Code | When |
 | --- | --- | --- |
-| `401` | `UNAUTHORIZED` | The profile request has no token, or its token is invalid or expired. |
-| `403` | `FORBIDDEN` | The profile request's token is not for a student. |
-| `404` | `NOT_FOUND` | The requested route does not exist. |
+| `401` | `UNAUTHORIZED` | A protected request has no token, or its token is invalid or expired. |
+| `403` | `FORBIDDEN` | The token role is not allowed for the requested route. |
+| `404` | `NOT_FOUND` | The route or an organization-owned resource does not exist in scope. |
+| `409` | `INVALID_EVENT_STATUS` / `EVENT_NOT_LIVE` | An event lifecycle action is invalid for its current status. |
 | `422` | `VALIDATION_ERROR` | The request body does not match the endpoint schema. |
 | `500` | `INTERNAL_SERVER_ERROR` | An unexpected server error occurs. |
 
@@ -143,20 +226,21 @@ The student feed, swipe, check-in, and feedback endpoints are not implemented
 yet. The current `/v1/profile` implementation uses PostgreSQL even when
 `MOCK=true`; mock behavior is not wired into this first student slice.
 
-## Proposed organization API
+## Remaining proposed organization API
 
 The paths below are required by the project instructions, but are not
 implemented yet. Their request and response shapes are an initial proposal;
 they are documented here for discussion and will need to be added to the
-runtime OpenAPI schema when implemented.
+runtime OpenAPI schema when implemented. Organization demo authentication and
+the event lifecycle above are implemented.
 
 ### Organization authentication
 
 Organization routes require a bearer token with `role: "org"` and an `org_id`
 claim. The server must take the organization scope from that claim, never from
-the request body or query string. There is not yet an implemented way to obtain
-an organization token; the current `/v1/auth/demo` route issues student tokens
-only.
+the request body or query string. `POST /v1/auth/demo` currently creates a new
+demo organization when called with `role: "org"`; production organization
+authentication and reuse of existing organizations are not implemented.
 
 All list routes below use cursor pagination. Proposed query parameters are
 `limit` (default `20`, maximum `100`) and `cursor` (opaque, optional). Proposed
@@ -168,48 +252,6 @@ list responses have the shape:
   "next_cursor": null
 }
 ```
-
-### Events
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/v1/events` | Create a draft event for the authenticated organization. |
-| `POST` | `/v1/events/{id}/publish` | Publish an organization's draft event. |
-| `GET` | `/v1/events/{id}/live` | Read event details and eligible live aggregates. |
-| `POST` | `/v1/events/{id}/close` | Close a published or live event. |
-
-Proposed `POST /v1/events` request:
-
-```json
-{
-  "name": "Cultural Night",
-  "type": "social",
-  "start_ts": "2026-12-10T18:00:00Z",
-  "end_ts": "2026-12-10T21:00:00Z",
-  "venue": "Student Center",
-  "topic_tags": ["culture", "food"],
-  "cost": 0,
-  "budget_planned": 500,
-  "expected_size": 80
-}
-```
-
-`name`, `type`, `start_ts`, and `end_ts` are required. Timestamps are UTC
-ISO 8601. `topic_tags` defaults to an empty list; the remaining optional values
-may be omitted or `null`. The server sets `org_id` from the token and creates
-the event with `status: "draft"`; callers cannot set `org_id`, `headcount`, or
-the event status in this request.
-
-Create, publish, and close responses return the event's `id` and current
-`status`, along with its event fields. The proposed statuses are `draft`,
-`published`, `live`, and `closed`. The `/live` response includes event details
-and aggregate metrics only. A metric is omitted unless its underlying group
-has at least 10 students; raw student rows and student identifiers are never
-returned.
-
-The transition from `published` to `live` is not specified by the current
-endpoint list. This proposal leaves `GET /live` read-only; whether the status
-changes automatically based on event time remains an implementation decision.
 
 ### Ingestion and fact review
 

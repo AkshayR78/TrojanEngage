@@ -1,6 +1,6 @@
 # TrojanEngage API
 
-Phase 0 backend scaffold for the TrojanEngage modular monolith.
+Backend scaffold and initial API slices for the TrojanEngage modular monolith.
 
 ## Local setup (five commands)
 

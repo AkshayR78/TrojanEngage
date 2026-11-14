@@ -23,7 +23,7 @@ def test_http_errors_use_standard_shape_and_request_id() -> None:
     assert error["request_id"] == response.headers["X-Request-ID"]
 
 
-def test_swagger_and_openapi_include_student_routes() -> None:
+def test_swagger_and_openapi_include_registered_routes() -> None:
     with TestClient(app) as client:
         docs_response = client.get("/docs")
         openapi_response = client.get("/openapi.json")
@@ -33,3 +33,7 @@ def test_swagger_and_openapi_include_student_routes() -> None:
     paths = openapi_response.json()["paths"]
     assert "/v1/auth/demo" in paths
     assert "/v1/profile" in paths
+    assert "/v1/events" in paths
+    assert "/v1/events/{event_id}/publish" in paths
+    assert "/v1/events/{event_id}/live" in paths
+    assert "/v1/events/{event_id}/close" in paths
