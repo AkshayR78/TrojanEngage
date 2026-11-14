@@ -21,3 +21,15 @@ def test_http_errors_use_standard_shape_and_request_id() -> None:
     assert set(error) == {"code", "message", "request_id"}
     assert error["code"] == "NOT_FOUND"
     assert error["request_id"] == response.headers["X-Request-ID"]
+
+
+def test_swagger_and_openapi_include_student_routes() -> None:
+    with TestClient(app) as client:
+        docs_response = client.get("/docs")
+        openapi_response = client.get("/openapi.json")
+
+    assert docs_response.status_code == 200
+    assert openapi_response.status_code == 200
+    paths = openapi_response.json()["paths"]
+    assert "/v1/auth/demo" in paths
+    assert "/v1/profile" in paths
